@@ -1,0 +1,62 @@
+# Unique name for this workflow
+name: All Tests
+
+# Definition when the workflow should run
+on:
+  workflow_dispatch:
+  schedule:
+    # Run every night at 5:00 AM UTC
+    - cron: '0 5 * * *'
+env:
+  CUMULUSCI_KEYCHAIN_CLASS: cumulusci.core.keychain.EnvironmentProjectKeychain
+  CUMULUSCI_SERVICE_github: ${{ secrets.CUMULUSCI_SERVICE_github }}
+  SFDX_HUB_KEY: ${{ secrets.DEVHUB_SFDX_URL }}
+
+jobs:
+  beta_test:
+    name: "Run all tests"
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout the source code
+      - name: 'Checkout source code'
+        uses: actions/checkout@v3
+      # Install Salesforce CLI
+      - name: 'Install Salesforce CLI'
+        run: |
+          npm install @salesforce/cli --location=global
+          nodeInstallPath=$(npm config get prefix)
+          echo "$nodeInstallPath/bin" >> $GITHUB_PATH
+          sf --version
+      # Store secret for dev hub
+      - name: 'Populate auth file with DEVHUB_SFDX_URL secret'
+        shell: bash
+        run: |
+          echo ${{ secrets.DEVHUB_SFDX_URL }} > ./DEVHUB_SFDX_URL.txt
+          secretFileSize=$(wc -c "./DEVHUB_SFDX_URL.txt" | awk '{print $1}')
+          if [ $secretFileSize == 1 ]; then
+              echo "Missing DEVHUB_SFDX_URL secret. Is this workflow running on a fork?";
+              exit 1;
+          fi
+      # Authenticate dev hub
+      - name: 'Authenticate Dev Hub'
+        run: sfdx org login sfdx-url -f ./DEVHUB_SFDX_URL.txt -a devhub -d
+      # Delete secret for dev hub
+      - name: 'Delete DEVHUB_SFDX_URL.txt'
+        run: rm ./DEVHUB_SFDX_URL.txt
+      # Install CCI
+      - name: Set up Python
+        uses: actions/setup-python@v1
+        with:
+          python-version: "3.8"
+      - name: Install CumulusCI
+        run: |
+          python -m pip install -U pip
+          pip install cumulusci
+      # Create scratch org and run tests
+      - name: Build Org and Execute Tests
+        run: |
+          cci flow run ci_feature --org beta
+      - name: Delete Scratch Org
+        if: ${{ always() }}
+        run: |
+          cci org scratch_delete beta

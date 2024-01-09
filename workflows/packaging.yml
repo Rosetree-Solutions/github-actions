@@ -1,0 +1,59 @@
+# Unique name for this workflow
+name: Packaging
+
+# Workflow starts when receiving custom event sent by CI workflow
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [ start-packaging ]
+
+env:
+  CUMULUSCI_KEYCHAIN_CLASS: cumulusci.core.keychain.EnvironmentProjectKeychain
+  CUMULUSCI_SERVICE_github: ${{ secrets.CUMULUSCI_SERVICE_github }}
+  SFDX_HUB_KEY: ${{ secrets.DEVHUB_SFDX_URL }}
+
+# Jobs to be executed
+jobs:
+  release-package-version:
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout the source code
+      - name: 'Checkout source code'
+        uses: actions/checkout@v3
+      # Install Salesforce CLI
+      - name: 'Install Salesforce CLI'
+        run: |
+          npm install @salesforce/cli --location=global
+          nodeInstallPath=$(npm config get prefix)
+          echo "$nodeInstallPath/bin" >> $GITHUB_PATH
+          sf --version
+      # Store secret for dev hub
+      - name: 'Populate auth file with DEVHUB_SFDX_URL secret'
+        shell: bash
+        run: |
+          echo ${{ secrets.DEVHUB_SFDX_URL }} > ./DEVHUB_SFDX_URL.txt
+          secretFileSize=$(wc -c "./DEVHUB_SFDX_URL.txt" | awk '{print $1}')
+          if [ $secretFileSize == 1 ]; then
+              echo "Missing DEVHUB_SFDX_URL secret. Is this workflow running on a fork?";
+              exit 1;
+          fi
+      # Authenticate dev hub
+      - name: 'Authenticate Dev Hub'
+        run: sfdx org login sfdx-url -f ./DEVHUB_SFDX_URL.txt -a devhub -d
+      # Delete secret for dev hub
+      - name: 'Delete DEVHUB_SFDX_URL.txt'
+        run: rm ./DEVHUB_SFDX_URL.txt
+      # Install CCI
+      - name: Set up Python
+        uses: actions/setup-python@v1
+        with:
+          python-version: "3.8"
+      - name: Install CumulusCI
+        run: |
+          python -m pip install -U pip
+          pip install cumulusci
+      # Create package version and extract its id
+      - name: 'Create package version'
+        id: createPackageVersion
+        run:  |
+          cci flow run release_unlocked_beta --org beta
